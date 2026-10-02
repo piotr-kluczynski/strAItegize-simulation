@@ -4,7 +4,7 @@ import select
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .handlers import dispatcher
-from shared.communication.transport import receive_message, send_message
+from strAItegize_common.communication import receive_message, send_message
 
 class Communication:
     def __init__(self, players):

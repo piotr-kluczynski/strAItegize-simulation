@@ -8,7 +8,7 @@ from simulation.utils import calc_distance
 from registering.simulation_publisher import SimulationPublisher
 from registering.simulation_notification import SimulationNotification
 
-from shared.recruitment_choice import RecruitmentChoice
+from strAItegize_common.others.recruitment_choice import RecruitmentChoice
 
 UNIT_TYPES = {
     "light_infantry": (2, 1, 6),
