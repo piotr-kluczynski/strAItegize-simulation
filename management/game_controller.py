@@ -1,11 +1,9 @@
 import os
-import sys
 import uuid
 import time
 import threading
 
-from simulation.simulation import PlayerStatus
-from communication.communication import Communication
+from communication.communication_context import CommunicationContext
 from management.game_loader import GameLoader
 
 class GameController:
@@ -19,12 +17,13 @@ class GameController:
 
         self.simulation = None
 
-        self.communication = Communication(self.players)
-        self.communication.initialize_sockets()
+        self.communication = CommunicationContext()
+        self.communication.start_session(self.players)
+
 
     def create_lobby(self):
         comms_thread = threading.Thread(
-                target=self.communication.wait_for_players_to_join,
+                target=self.communication.wait_for_players,
                 daemon=True
         )
         comms_thread.start()
@@ -58,103 +57,58 @@ class GameController:
 
         self.communication.set_simulation_object(simulation=self.simulation)
 
-        # Wait for all players to signal readiness
-        session_init_result = self.communication.execute_for_all(
-            recipents=self.simulation.players,
-            function=self.communication.wait_for_readiness,
-            operation_name="Readiness Check"
-        )
-
-        if not session_init_result:
-            print("Some players have encountered an error while preparing for simulation!\r\nClosing the simulation")
-            sys.exit()
-
-        # Initialize simulation on all players
-        sim_init_result = self.communication.execute_for_all(
-            recipents=self.simulation.players,
-            function=self.communication.initialize_simulation,
+        # Initialize simulation
+        self.communication.start_simulation(
             players=self.simulation.players,
             regions=[region_id for region_id in self.simulation.board.regions.keys()],
-            neighbouring_regions=self.simulation.get_neighbouring_regions(), 
-            max_round=self.simulation.max_round,
-            operation_name="Session Initialization"
+            neighbouring_regions=self.simulation.get_neighbouring_regions(),
+            final_round=self.simulation.max_round,
+            is_start_upkeep=self.simulation.is_upkeep_round()
         )
 
-        if not sim_init_result:
-            print("A simulation could not have been initialized properly!\r\nClosing the simulation.")
-            sys.exit()
-
     def start_simulation(self):
-        current_round = 1
         simulation_active = True
 
         while simulation_active:
-            # Awaiting player readiness for a new round
-            round_ready_result = self.communication.execute_for_all(
-                recipents=[player for player, status in self.simulation.players_status.items() if status != PlayerStatus.LOST],
-                function=self.communication.wait_for_readiness,
-                operation_name="Readiness Check"
-            )
-
-            if not round_ready_result:
-                print("Some players have encountered an error while preparing for new round!\r\nClosing the simulation.")
-                sys.exit()
-
-            self.communication.reset_connection_timeout()
-
-            # Executing the upkeep phase if necessary
-            recruitment_choices = None
+            # Execute Upkeep phase if necessary
             if self.simulation.is_upkeep_round():
-                recruitment_choices = self.communication.execute_upkeep_phase([player for player, status in self.simulation.players_status.items() if status != PlayerStatus.LOST])
+                players_surplus = self.simulation.get_players_surplus()
+                players = list(players_surplus.keys())
 
-                if recruitment_choices is None:
-                    print("Some players have encountered an error while choosing which units to recruit.\r\nClosing the simulation.")
-                    sys.exit()
+                players_regions = {
+                    player: self.simulation.get_player_regions(player)
+                    for player in players
+                }
 
-                self.communication.reset_connection_timeout()
+                self.communication.execute_upkeep(
+                    players=players,
+                    players_supplies=players_surplus,
+                    players_regions=players_regions
+                )
 
-            # Starting new round within the simulation
-            simulation_active = self.simulation.start_round(recruitment_choices)
-            self.communication.reset_connection_timeout()
+            # Start new round
+            simulation_active = self.simulation.start_round()
 
-            # Sending new round data
             round_data = self.simulation.get_round_data()
-
-            round_init_result = self.communication.execute_for_all(
-                recipents=[player for player, status in self.simulation.players_status.items() if status != PlayerStatus.LOST],
-                function=self.communication.initialize_round,
-                **round_data,
-                operation_name="Round Initialization"
+            self.communication.start_round(
+                current_round=round_data["current_round"],
+                final_round=round_data["final_round"],
+                players=round_data["players"],
+                leaderboard=round_data["leaderboard"],
+                units=round_data["units"],
+                regions=round_data["regions"],
+                tresspasers=round_data["tresspasers"],
+                events=round_data["events"]
             )
-            self.communication.reset_connection_timeout()
 
-            # Serving data requests of all active players
-            round_end_result = self.communication.execute_for_all(
-                recipents=[player_id for player_id, status in self.simulation.players_status.items() if status != PlayerStatus.LOST],
-                function=self.communication.listen_for_tool_calls,
-                operation_name="Listening for tool calls"
-            )
-            self.communication.reset_connection_timeout()
-
-            # Inform all players that the round ended and await their confirmation
-            round_fin_result = self.communication.execute_for_all(
-                recipents=[player for player, status in self.simulation.players_status.items() if status != PlayerStatus.LOST],
-                function=self.communication.finalize_round,
-                operation_name="Round Finalization"
-            )
-            self.communication.reset_connection_timeout()
-
-            # Ending current round within the simulation
+            # End round
             self.simulation.end_round()
 
+            self.communication.end_round(self.simulation.is_upkeep_round())
+
             # Resetting observer to remove outdated events
-            self.event_observer.reset_events()
+            self.simulation.reset_player_events()
 
     def end_simulation(self):
         # Inform players that the simulation has ended
-        self.communication.execute_for_all(
-            recipents=[player for player, status in self.simulation.players_status.items() if status != PlayerStatus.LOST],
-            function=self.communication.finalize_simulation,
-            operation_name="Session Finalization"
-        )
-        self.communication.reset_connection_timeout()
+        self.communication.end_simulation()

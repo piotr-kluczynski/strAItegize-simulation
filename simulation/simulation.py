@@ -1,6 +1,9 @@
 import random
 from enum import Enum
 
+from simulation.tile import Tile
+from simulation.region import Region
+
 from simulation.board import Board
 from simulation.unit import Unit
 from simulation.utils import calc_distance
@@ -9,6 +12,7 @@ from registering.simulation_publisher import SimulationPublisher
 from registering.simulation_notification import SimulationNotification
 
 from strAItegize_common.others.recruitment_choice import RecruitmentChoice
+from strAItegize_common.others.order import Order
 
 UNIT_TYPES = {
     "light_infantry": (2, 1, 6),
@@ -21,49 +25,124 @@ class PlayerStatus(Enum):
     LOST = "Lost"
 
 class Simulation:
-    def __init__(self, players, max_round, upkeep_round, tiles, regions, type_counters=None):
-        self.players = players
+    """ Class responsible for managing the simulation, allowing for seamless proceeding between round, using methods such as start_round or add_player_orders.
+        Utilizes middle and low-level classes, such as Board, or Unit to provide a high-level interface to interact with its environment.
+    """
+    def __init__(self, players: list[str], max_round: int, upkeep_round: int, tiles: dict[tuple[int, int, int], Tile], regions: dict[str, Region], type_counters:dict[str, int]=None):
+        """Method initializing the Simulation object, and setting up default values for its properties.
+
+        Args: 
+        - players: list[str] - list of player_id's, assigned to players property,
+        - max_round: int - round limit, after which simulation will end, assigned to max_round property,
+        - tiles: dict[tuple[int, int, int], Tile] - dictionary ((q, r, s):Tile) building together the game board, used to initialize the Board object for board property,
+        - regions: dict[str, Region] - dictionary (region_id:Region) creating the administrative division of the game board, used to initialize the Board object for board property,
+        - type_counters: dict[str, int] - dictionary (str:int) containing the first available id number per unit type, assigned to the type_counters property.
+
+        Returns: None
+        """
+        # List of player_id's (str) used for their identification.
+        self.players = players 
+        # Dictionary (player_id:PlayerStatus) describing whether player still participates in the simulation.
         self.players_status = {player: PlayerStatus.ACTIVE for player in players}
+        # Dictionary (player_id:List[str]) containing "simulation events" to display for players at the round start.
         self.players_events = {player: [] for player in players}
 
+        self.unit_requests: dict[str, list[RecruitmentChoice]] = {player: [] for player in players}
+
+        # Dictionary (player_id:List[UnitOrder]) containing orders given by the players to be executed at the round end.
         self.players_orders = {}
 
+        # Dictionary (unit_id:Unit) containing all units within the simulation.
         self.units = {}
+        # Board class object, related to the current session.
         self.board = Board(tiles, regions)
 
+        # Round counter, increased at the round end.
         self.round = 1
+        # Round limit (integer), after which the simulation will end.
         self.max_round = max_round
+        # The round frequency (integer) with which the "upkeep round" occurs, resulting in recruitment/disbanding of units.
         self.upkeep_round = upkeep_round
 
+        # Dictionary (str:int) containing the most recent id number of recruited unit, separate for each unit type. Used to generate unique unit ids.
         self.type_counters = type_counters if type_counters is not None else {unit_type: 0 for unit_type in UNIT_TYPES}
 
+        # SimulationPublisher class object, allowing simulation to signal specific occurrences to be processed independently by other systems.
         self.simulation_publisher = SimulationPublisher()
 
     # OBSERVATION ACTIONS
-    def observe_unit(self, unit_id):
+    def observe_unit(self, unit_id: str) -> list[Tile]:
+        """
+        Method returning all tiles within the range of 3 units of distance from the unit with given unit_id. Used for providing simulation information to the session participants.
+        
+        Args:
+            - unit_id - unique identifier of the chosen unit.
+
+        Returns: List of Tile class objects surrounding the unit with given unit_id.
+        """
         unit = self.units[unit_id]
         return self.board.get_tiles_in_range(unit.tile, 3)
-    def observe_region(self, region_id):
+    def observe_region(self, region_id: str) -> list[Tile]:
+        """
+        Method returning all tiles belonging to the region with given region_id. Used for providing simulation information to the session participants.
+
+        Args:
+        - region_id: str - unique identifier of the chosen region.
+
+        Returns:
+        tiles: list[Tile] - List of Tile class objects assigned to the region with given region_id.
+        """
         return self.board.regions[region_id].tiles
-    def get_player_units(self, player_id):
+    def get_player_units(self, player_id: str) -> list[str]:
+        """
+        Method returning unit_id's of all units belonging to the player with given player_id. Used for providing simulation information to the session participants.
+
+        Args:
+        - player_id: str - unique identifier of the chosen player.
+
+        Returns:
+        unit_ids: list[str] - List of unit_ids of all units owned by the player.
+        """
         return [unit.unit_id for unit in self.units.values() if unit.owner == player_id]
-    def get_player_regions(self, player_id):
+    def get_player_regions(self, player_id: str) -> list[str]:
+        """
+        Method returning region_id's of all regions controlled by the player with given player_id. Used for providing simulation information to the session participants.
+
+        Args:
+        - player_id: str - unique identifier of the chosen player.
+
+        Returns:
+        region_ids: list[str] - List of region_ids of all regions controlled by the player.
+        """
         return [region.region_id for region in self.board.regions.values() if region.owner == player_id]
-    def get_neighbouring_regions(self):
+    def get_neighbouring_regions(self) -> list[list[str]]:
+        """
+        Method returning nested list of neighbouring region ids for each region within the simulation session. 
+        Used for providing simulation information to the session participants.
+
+        Args: None
+
+        Returns:
+        neighbouring_regions_ids: list[list[str]] - List of region_ids for each region.
+        """
         return [self.board.get_neighbouring_region_ids(region) for region in self.board.regions.values()]
     
     # TURN MANAGEMENT
-    def start_round(self, new_units=None):
-        print(f"CZY RUNDA JEST UPKEEP? {self.is_upkeep_round()}")
-        print(f"RUNDA: {self.round}, UPKEEP: {self.upkeep_round}")
+    def start_round(self) -> bool:
+        """
+        High-level method initializing new round, and preparing components within the simulation. Stops the simulation if game over conditions has been met, performs the upkeep phase if needed, and removing unsuccessful participants from the simulation.
+
+        Args:
+        - new_units: dict[str, list[RecruitmentChoice]] - optional argument, by which the choice regarding unit recruitment choice is passed(only on upkeep rounds). None by default.
+
+        Returns: 
+        does_sim_cont: bool - False if simulation has come to an end, True otherwise.
+        """
         if self.round > self.max_round:
             return False
 
         if len([player_status for player_status in self.players_status.values() if self.players_status == PlayerStatus.ACTIVE]) == 1:
             return False
-        
-        if new_units is None:
-            new_units = { player: [] for player in self.players }
 
         # If the round is the upkeep round
         if self.round % self.upkeep_round == 0:
@@ -73,9 +152,11 @@ class Simulation:
                 supplies = self.calculate_supplies(player)
 
                 if supplies > 0:
-                    self.recruit_units(player, supplies, new_units.get(player, []))
+                    self.recruit_units(player, supplies, self.unit_requests[player])
                 elif supplies < 0:
                     self.disband_units(player, supplies)
+
+            self.unit_requests[player] = []
 
         # Checking if players should be removed from the game
         for player in self.players:
@@ -102,6 +183,15 @@ class Simulation:
             )
         return True
     def end_round(self):
+        """
+        High-level method finalizing current round, and preparing the components within the simulation. 
+        Executing player's orders, resetting unit's temporary parameters, changing regions ownership, and increasing round counter.
+
+        Args: None
+
+        Returns: None
+        """
+
         self.execute_players_orders()
         self.players_orders = {}
 
@@ -150,63 +240,119 @@ class Simulation:
             )
 
     # UPKEEP ROUND
-    def recruit_units(self, player, budget, unit_requests: list[RecruitmentChoice]):
-        for unit_request in unit_requests:
-            region = self.board.regions[unit_request.region_id]
-            cost = UNIT_TYPES[unit_request.unit_type][1]
+    def recruit_units(self, player: str, budget: int, recruitment_choices: list[RecruitmentChoice]) -> None:
+        """
+        Medium-level method creating new units, of type and in a location given by the list of RecruitmentChoice objects. Each request is resolved in for loop, which stops when the end of the list is reached, or the unit requests cost surpasses the budget.
+
+        Args:
+        - player: str -  unique identifier of the player recruiting the units,
+        - budget: int - the surplus of supplies used to recruit new units,
+        - unit_requests: list[RecruitmentChoice] - list of RecruitmentChoice objects containing information, necessary to create new unit.
+
+        Returns: None
+        """
+        for recruitment_choice in recruitment_choices:
+            recruitment_choice = RecruitmentChoice.model_validate(recruitment_choice)
+
+            region = self.board.regions[recruitment_choice.region]
+            cost = UNIT_TYPES[recruitment_choice.unit_type][1]
 
             if budget < cost:
                 break
 
             q, r, s = region.command_centre
-            if self.add_unit(unit_request.unit_type, player, q, r, s):
+
+            # Attempting to add new unit
+            if self.add_unit(recruitment_choice.unit_type, player, q, r, s):
                 budget -= cost
-    def disband_units(self, player, deficit):
-            units_to_remove = []
+    def disband_units(self, player: str, deficit: int) -> None:
+        """
+        Medium-level method removing units the player's units in the chronological order, called during upkeep phase, when the player's supply is lesser than player's units supply cost.
+        Starting from the oldest unit, they are removed from the simulation within a loop, which stops until all units are removed or the supply deficit surprasses zero.
+
+        Args:
+        - player: str - unique identifier of the player who's units are being disbanded.
+        - deficit: int - the negative integer representing the missing supplies.
+
+        Returns: None 
+        """
+        units_to_remove = []
     
-            for unit in list(self.units.values()):
-                if deficit >= 0:
+        for unit in list(self.units.values()):
+            if deficit >= 0:
                     break
     
-                if unit.owner == player:
-                    deficit += unit.upkeep
-                    units_to_remove.append(unit)
+            if unit.owner == player:
+                deficit += unit.upkeep
+                units_to_remove.append(unit)
     
-            for unit in units_to_remove:
-                self.remove_unit(unit)
-    def calculate_supplies(self, player):
-        income = 0
+        for unit in units_to_remove:
+            self.simulation_publisher.notify(
+                SimulationNotification(
+                    category="UNIT_DISBANDED",
+                    player_id=player,
+                    unit_id=unit.unit_id
+                )
+            )
+            self.remove_unit(unit)
+    def calculate_supplies(self, player: str) -> int:
+        """
+        Low-level method calculating the supply surplus/deficit based on the controlled regions and units. 
+        The value is calculated as sum of all controlled regions supply incomes minus sum of all units upkeep costs. 
+        Called during the upkeep phase to decide whether the player ought get to choose new units to recruit, or get some of their units disbanded.
+
+        Args:
+        - player: str - unique identifier of the player who's units are being disbanded.
+
+        Returns:
+        - supply_balance: int - the difference between supply income and supply costs.
+        """
+        supply_balance = 0
 
         # We add supply value of each controlled region
         for region in self.board.regions.values():
             if region.owner == player:
-                income += region.region_upkeep
+                supply_balance += region.region_upkeep
 
         # We detract value of each controlled unit
         for unit in self.units.values():
             if unit.owner == player:
-                income -= unit.upkeep
+                supply_balance -= unit.upkeep
 
-        return income
+        return supply_balance
 
     # PROCESSING PLAYER ACTIONS
-    def add_player_orders(self, player, orders_list):
-        movement_orders, support_orders, attack_orders = self.process_orders_list(player, orders_list)
-        if movement_orders is None:
-            return False
+    def add_player_orders(self, player: str, orders_list: list[Order]):
+        """
+        High-level method verifying the validity and registering the list of orders given by the player. Used to register the player's orders before the round end (when all orders are executed).
+        The verification is delegated to the process_orders_list method.
 
+        Args:
+        - player: str - unique identifier of the player who's units are being disbanded,
+        - orders_list: list[Order] - list of Order objects, assigned by the player.
+
+        """
+        movement_orders, support_orders, attack_orders = self.process_orders_list(player, orders_list)
         self.players_orders[player] = (movement_orders, support_orders, attack_orders)
-        return True
-    def execute_order(self, order):
+    def execute_order(self, order: Order):
+        """
+        Medium-level method for executing an appropriate in-simulation action according to the given order type. 
+
+        Args:
+        - order: Order - data object containing information needed to perform given action within the simulation.
+
+        Returns:
+        - success: bool - False if the action was not possible to perform (e.g.: unit targeted by the attack, was already destroyed), True otherwise.
+        """
         unit = self.units[order.unit_id]
 
         if order.order_type == "hold":
-            return True
+            return
 
         if order.order_type == "move":
-            q = order["move_q"]
-            r = order["move_r"]
-            s = order["move_s"]
+            q = order.move_q
+            r = order.move_r
+            s = order.move_s
 
             return self.move_unit(unit, q, r, s)
 
@@ -217,9 +363,15 @@ class Simulation:
 
         if order.order_type == "support":
             return self.support_unit(unit, target_unit)
-
-        return False
     def execute_players_orders(self):
+        """
+        Medium-level method which combines each player's list of orders, and executes them. 
+        The orders are first split into categories based on their type ("hold", "move", "attack" and "support"), before being combined into single order list. All orders are executed in the following order: 1. movement, 2. support, 3. attack. The player order within this hierarchy is chosen randomly each round.
+
+        Args: None
+
+        Returns: None
+        """
         # Choosing random order of players
         players_priority = random.sample(self.players, len(self.players))
 
@@ -241,30 +393,43 @@ class Simulation:
         all_orders = all_movement_orders + all_support_orders + all_attack_orders
         for order in all_orders:
             self.execute_order(order)
+    def process_orders_list(self, player: str, orders_list: list[Order]) -> tuple:
+        """
+        Medium-level method for preparing the orders for execution. The process is split into 5 separate steps, each calling lower-level function to execute it. 
+        In 4 first steps, functions verify_faithfulness, verify_orders_uniqueness, verify_unit_ownership, and verify_correctness are used to check for the errors in the order list. 
+        In the final, fifth step, the split_orders function is called to split the list into distinct order lists based on their type.
 
-    def process_orders_list(self, player, orders_list):
+        Args:
+        - player: str - unique identifier of the player who's units are being disbanded,
+        - orders_list: list[Order] - list of Order objects assigned by the player.
+
+        Returns:
+        - order lists: tuple - (None, None, None) if error has occurred during the verification process, (movement orders, support orders, attack orders) otherwise.
+        """
         # Check if every coordinates or unit_id exists within the simulation
-        if not self.verify_faithfulness(orders_list):
-            return None, None, None 
+        self.verify_faithfulness(orders_list)
 
         # Check if every unit received up to 1 order
-        if not self.verify_orders_uniqueness(orders_list):
-            return None, None, None
+        self.verify_orders_uniqueness(orders_list)
 
         # Check if every ordered unit is owned by the player
-        if not self.verify_unit_ownership(player, orders_list):
-            return None, None, None
+        self.verify_unit_ownership(player, orders_list)
 
         # Check if orders are not invalidating each other
-        if not self.verify_correctness(orders_list):
-            return None, None, None
+        self.verify_correctness(orders_list)
 
         return self.split_orders(orders_list)
-    def verify_faithfulness(self, orders_list):
+    def verify_faithfulness(self, orders_list: list[Order]):
+        """
+        Low-level method iterating over the orders within the list, verifying whether the target unit/tile exists within the simulation (e.g.: cubic coordinates can be valid, but not actually exist on the game board).
+
+        Args:
+        - orders_list: list[Order] - list of Order objects assigned by the player.
+        """
         for order in orders_list:
             # Verifying the unit_id
             if self.units.get(order.unit_id) is None:
-                return False
+                raise Exception(f"Unit with unit_id: {order.unit_id} does not exist.")
 
             # Verifying the coordinates for movement orders
             if order.order_type == "move":
@@ -276,50 +441,95 @@ class Simulation:
                 target_coord = (unit.tile.q + dq, unit.tile.r + dr, unit.tile.s + ds)
 
                 if self.board.tiles.get(target_coord) is None:
-                    return False
+                    raise Exception(f"Tile with position: ({target_coord[0]}, {target_coord[1]}, {target_coord[2]}) does not exist.")
 
             # Verifying target_id for attack and support orders
             elif order.order_type == "attack" or order.order_type == "support":
                 if self.units.get(order.target_id) is None:
-                    return False
+                    raise Exception(f"Target of the action with unit_id: {order.target_id} does not exist.")
+    def verify_orders_uniqueness(self, orders_list: list[Order]):
+        """
+        Low-level method verifying whether each unit was given less or equal to 1 order (e.g.: each unit can execute only one action per round).
 
-        return True         
-    def verify_orders_uniqueness(self, orders_list):
-        ids = [a.unit_id for a in orders_list]
-        return len(ids) == len(set(ids))
-    def verify_unit_ownership(self, player, orders_list):
+        Args:
+        - orders_list: list[Order] - list of Order objects assigned by the player.
+        """
+        units_with_orders = []
+
+        for order in orders_list:
+            if order.unit_id in units_with_orders:
+                raise Exception(f"Unit with unit_id: {order.unit_id} received multiple orders during the same round.")
+            else:
+                units_with_orders.append(order.unit_id)
+    def verify_unit_ownership(self, player: str, orders_list: list[Order]):
+        """
+        Low-level method for verifying that each order was assigned to the unit owned by the player giving them.
+
+        Args:
+        - player: str - unique identifier of the player who gave the order,
+        - orders_list: list[Order] - list of Order objects assigned by the player.
+        """
         for order in orders_list:
             unit = self.units[order.unit_id]
-            if unit.owner != player:
-                return False
 
-        return True
-    def verify_correctness(self, orders_list):
+            if unit.owner != player:
+                raise Exception(f"An order to unit with unit_id: {order.unit_id} cannot be assigned, as it belongs to another player: {unit.owner}.")
+    def verify_correctness(self, orders_list: list[Order]):
+        """
+        Low-level method for verifying that the execution of player's own orders do not invalidate the following orders.
+
+        Args:
+        - orders_list: list[Order] - list of Order objects assigned by the player.
+        """
         # Creating artificial occupancy to predict unit movement
-        sim_units = {
-            unit_id: (self.units[unit_id]).copy()
-            for order in orders_list 
-            if (unit_id := order.unit_id) in self.units
-        }
-        sim_tiles = self.board.tiles.copy()
+        sim_tiles =  {} 
+        for og_tile in self.board.tiles.values():
+            tile_copy = Tile(
+                q=og_tile.q,
+                r=og_tile.r,
+                s=og_tile.s
+            )
+
+            sim_tiles[(og_tile.q, og_tile.r, og_tile.s)] = tile_copy
+
+        sim_units = {}
+        for og_unit in self.units.values():
+            unit_copy = Unit(
+                unit_id=og_unit.unit_id,
+                owner=og_unit.owner,
+                movement=og_unit.movement,
+                upkeep=og_unit.upkeep,
+                strength=og_unit.strength
+            )
+
+            # Placing copy on the simulated occupancy
+            sim_tile = sim_tiles[(og_unit.tile.q, og_unit.tile.r, og_unit.tile.s)]
+
+            sim_tile.unit = unit_copy
+            unit_copy.tile = sim_tile
+
+            sim_units[unit_copy.unit_id] = unit_copy
 
         # Simulating unit actions to check if orders are not invalidating each other
         move_orders, support_orders, attack_orders = self.split_orders(orders_list)
 
         for move_order in move_orders:
             unit_id = move_order.unit_id
-            q = move_order.move_q
-            r = move_order.move_r
-            s = move_order.move_s
+            dq = move_order.move_q
+            dr = move_order.move_r
+            ds = move_order.move_s
 
-            if self.board.find_shortest_path(sim_units[unit_id].tile, sim_tiles[q, r, s], sim_units[unit_id].movement, sim_tiles) is None:
-                return False
+            unit = sim_units[unit_id]
+            start_tile = unit.tile
+            target_tile = sim_tiles[(start_tile.q+dq, start_tile.r+dr, start_tile.s+ds)]
+
+            if self.board.find_shortest_path(start_tile, target_tile, unit.movement, sim_tiles) is None:
+                raise Exception(f"A movement order to unit with unit_id: {move_order.unit_id} cannot be assigned, as the target tile is out of reach (possibly due to your other unit blocking its path).")
 
             # Updating the simulated occupancy
-            sim_units[unit_id].tile.unit = None
-            sim_units[unit_id].tile = sim_tiles[q, r, s]
-            sim_tiles[q, r, s] = sim_units[unit_id]
-            
+            start_tile.unit = None
+            unit.tile = target_tile
+            target_tile.unit = unit
 
         for support_order in support_orders:
             unit_id = support_order.unit_id
@@ -332,20 +542,30 @@ class Simulation:
             q2, r2, s2 = unit2.tile.q, unit2.tile.r, unit2.tile.s
 
             if calc_distance(q1, r1, s1, q2, r2, s2) > 1:
-                return False
+                raise Exception(f"A support order to unit with unit_id: {support_order.unit_id} cannot be assigned, as the target unit is out of reach (possibly due to your other unit moving).")
 
         for attack_order in attack_orders:
             unit_id = attack_order.unit_id
             target_id = attack_order.target_id
 
-            q1, r1, s1 = sim_tiles[unit_id]
-            q2, r2, s2 = sim_tiles[target_id]
+            unit1 = sim_units[unit_id]
+            unit2 = sim_units[target_id]
+
+            q1, r1, s1 = unit1.tile.q, unit1.tile.r, unit1.tile.s
+            q2, r2, s2 = unit2.tile.q, unit2.tile.r, unit2.tile.s
 
             if calc_distance(q1, r1, s1, q2, r2, s2) > 1:
-                return False
-        return True
+                raise Exception(f"A attack order to unit with unit_id: {attack_order.unit_id} cannot be assigned, as the target unit is out of reach.")
+    def split_orders(self, orders_list: list[Order]) -> tuple[list[Order], list[Order], list[Order]]:
+        """
+        Medium-level method that splits the overall order list into 3 separate lists: movement orders, support orders, attack orders.
 
-    def split_orders(self, orders_list):
+        Args:
+        - orders_list: list[Order] - list of Order objects assigned by the player.
+
+        Returns:
+        - split_orders: tuple[list[Order], list[Order], list[Order]] - tuple containing 3 separate lists of orders.
+        """
         move_orders = [a for a in orders_list if a.order_type == "move"]
         support_orders = [a for a in orders_list if a.order_type == "support"]
         attack_orders = [a for a in orders_list if a.order_type == "attack"]
@@ -353,9 +573,48 @@ class Simulation:
         return move_orders, support_orders, attack_orders
 
     # UNITS MANAGMENT
-    def add_unit(self, unit_type, owner, q, r, s):
+    def add_unit(self, unit_type: str, owner: str, q: int, r: int, s: int) -> bool:
+        """
+        Low-level method creating new unit, and placing it on the game board.
+
+        Args:
+        - unit_type: str - identifier of the unit type, used as key in the UNIT_TYPE dictionary,
+        - owner: str - unique player identifier, to which new unit is assigned.
+        - q: int - value of q coordinate of the tile unit will be placed on,
+        - r: int - value of r coordinate of the tile unit will be placed on,
+        - s: int - value of s coordinate of the tile unit will be placed on.
+
+        Returns:
+        - success: bool - False if an error has occurred while creating or placing the unit, True otherwise.
+        """
         tile = self.board.get_tile_by_coord(q, r, s)
-        if tile is None or tile.unit is not None:
+
+        # Checking if tile exists
+        if tile is None:
+            if self.simulation_publisher is not None:
+                self.simulation_publisher.notify(
+                    SimulationNotification(
+                        category="RECRUITMENT_BLOCKED",
+                        player_id=owner,
+                        new_q=q,
+                        new_r=r,
+                        new_s=s
+                    )
+                )
+            return False
+
+        # Checking if tile is not occupied
+        if tile.unit is not None:
+            if self.simulation_publisher is not None:
+                self.simulation_publisher.notify(
+                    SimulationNotification(
+                        category="RECRUITMENT_BLOCKED",
+                        player_id=owner,
+                        new_q=q,
+                        new_r=r,
+                        new_s=s
+                    )
+                )
             return False
 
         # Creating the new unit
@@ -378,7 +637,16 @@ class Simulation:
 
         self.type_counters[unit_type] += 1
         return True
-    def remove_unit(self, unit):
+    def remove_unit(self, unit: Unit):
+        """
+        Low-level method for completely removing the unit from the simulation.
+        All references to it are removed, and the unit key:value pair is removed from the units property dictionary.
+
+        Args:
+        - unit: Unit - the unit object to be removed from the simulation.
+
+        Returns: None
+        """
         unit.tile.unit = None
         unit.tile = None
         del self.units[unit.unit_id]
@@ -391,8 +659,15 @@ class Simulation:
                     unit_id=unit.unit_id
                 )
             )
+    def push_chain(self, unit1: Unit, unit2: Unit):
+        """
+        Low-level method for resolving combat outcome in which retreating defender is blocked by another unit.
+        Method iteratively attempts to move the second unit into next tile in the direction opposite to the direction of the attack, creating chain of pushed units until a free tile is found, or lack of it is established. Then either all units in the chain are moved, or the first unit in the chain is destroyed.
 
-    def push_chain(self, unit1, unit2):
+        Args:
+        - unit1: Unit - the unit object corresponding to the attacker,
+        - unit2: Unit - the unit object corresponding to the defender.
+        """
         chain = []
 
         current_tile = unit2.tile
@@ -429,7 +704,7 @@ class Simulation:
         # If there's no space to fall back, the unit dies
         if not can_escape:
             self.remove_unit(unit2)
-            return True
+            return
 
         # Moving to the back
         for unit in reversed(chain):
@@ -442,8 +717,17 @@ class Simulation:
             )
 
             self.place_unit(unit, new_tile)
-        return True
-    def place_unit(self, unit, tile):
+    def place_unit(self, unit: Unit, tile: Tile):
+        """
+        Low-level method changing the position of given unit to the given tile.
+        Modifies all relevant references, in order to ensure game board consistency.
+
+        Args:
+        - unit: Unit - the unit object, which location needs to be changed,
+        - tile: Tile - the tile object, to which unit needs move to.
+
+        Returns: None.
+        """
         # We remove the old tile
         if unit.tile is not None:
             # If the tile existed then the unit must have been moved
@@ -469,33 +753,103 @@ class Simulation:
             tile.unit = unit
 
     # UNIT ACTIONS
-    def move_unit(self, unit, dq, dr, ds):
+    def move_unit(self, unit: Unit, dq: int, dr: int, ds: int):
+        """
+        Low-level method executing the movement action, by verifying whether the action is possible, and then changing the unit position using place_unit method.
+
+        Args:
+        - unit: Unit - the unit object, which location needs to be changed,
+        - dq: int - value of change applied to the current q coordinate, 
+        - dr: int - value of change applied to the current r coordinate, 
+        - ds: int - value of change applied to the current s coordinate, 
+
+        Returns:
+        - success: bool - False if movement action is impossible to execute, True otherwise.
+        """
+        error_flag = False
+
         # Check if the target tile exists
         target_tile = self.board.get_tile_by_coord(unit.tile.q+dq, unit.tile.r+dr, unit.tile.s+ds)
         if target_tile is None:
-            return False
+            # Sending notification if movement was impossible
+            self.simulation_publisher.notify(
+                SimulationNotification(
+                    category="MOVE_BLOCKED",
+                    player_id=unit.owner,
+                    unit_id=unit.unit_id,
+                    old_q=unit.tile.q,
+                    old_r=unit.tile.r,
+                    old_s=unit.tile.s,
+                    new_q=unit.tile.q+dq,
+                    new_r=unit.tile.r+dr,
+                    new_s=unit.tile.s+ds
+                )
+            )
+            return
 
         # Check if the target tile is in range
         shortest_path = self.board.find_shortest_path(unit.tile, target_tile, unit.movement, self.board.tiles)
         if shortest_path is None:
-            return False
+            # Sending notification if movement was impossible
+            self.simulation_publisher.notify(
+                SimulationNotification(
+                    category="MOVE_BLOCKED",
+                    player_id=unit.owner,
+                    unit_id=unit.unit_id,
+                    old_q=unit.tile.q,
+                    old_r=unit.tile.r,
+                    old_s=unit.tile.s,
+                    new_q=unit.tile.q+dq,
+                    new_r=unit.tile.r+dr,
+                    new_s=unit.tile.s+ds
+                )
+            )
+            return
 
         # Check if the target tile isn't already occupied
         if target_tile.unit is not None:
-            return False
+            # Sending notification if movement was impossible
+            self.simulation_publisher.notify(
+                SimulationNotification(
+                    category="MOVE_BLOCKED",
+                    player_id=unit.owner,
+                    unit_id=unit.unit_id,
+                    old_q=unit.tile.q,
+                    old_r=unit.tile.r,
+                    old_s=unit.tile.s,
+                    new_q=unit.tile.q+dq,
+                    new_r=unit.tile.r+dr,
+                    new_s=unit.tile.s+ds
+                )
+            )
+            return
 
         # Move unit to the target tile
         self.place_unit(unit, target_tile)
-        return True
-    def attack_unit(self, unit1, unit2):
+    def attack_unit(self, unit1: Unit, unit2: Unit):
+        """
+        Low-level method executing the attack action, by verifying whether the action is possible, and then performing combat between given units.
+
+        Args:
+        - unit1: Unit - attacker object,
+        - unit2: Unit - defender object.
+
+        Returns:
+        - success: bool - False if attack action is impossible to execute, True otherwise.        
+        """
         tile1 = unit1.tile
         tile2 = unit2.tile
 
         if calc_distance(tile1.q, tile1.r, tile1.s, tile2.q, tile2.r, tile2.s) > 1:
-            return False
-
-        if not unit2.alive:
-            return False
+            self.simulation_publisher.notify(
+                SimulationNotification(
+                    category="ATTACK_BLOCKED",
+                    player_id=unit1.owner,
+                    unit_id=unit1.unit_id,
+                    target_id=unit2.unit_id
+                )
+            )
+            return
 
         attack_power = random.randint(1, unit1.strength) + 2 * len(unit1.supporting_units)
         defend_power = random.randint(1, unit2.strength) + 2 * len(unit2.supporting_units)
@@ -523,7 +877,6 @@ class Simulation:
                     )
                 )
 
-            return True
         else:
             if 2*defend_power <= attack_power:
                 # Defenders are completely destroyed
@@ -550,7 +903,7 @@ class Simulation:
                         )
                     )
 
-                return True
+                return
 
             unit2_old_tile = unit2.tile
 
@@ -579,24 +932,45 @@ class Simulation:
                         target_id=unit1.unit_id,
                         combat_outcome="defeat"
                     )
-                )
+                )      
+    def support_unit(self, unit1: Unit, unit2: Unit):
+        """
+        Low-level method executing the support action, by verifying whether the action is possible, and then registering the supporting unit in the list of supporting units of the supported units.
 
-            return True
-    def support_unit(self, unit1, unit2):
+        Args: 
+        - unit1: Unit - supporting unit's object,
+        - unit2: Unit - supported unit's object.
+        """
+        error_flag = False
+
         tile1 = unit1.tile
         tile2 = unit2.tile
 
         if calc_distance(tile1.q, tile1.r, tile1.s, tile2.q, tile2.r, tile2.s) > 1:
-            return False
+            error_flag = True
 
-        if not unit2.alive:
-            return False
-
-        unit2.supporting_units.append(unit1)
-        return True
+        if not error_flag:
+            unit2.supporting_units.append(unit1)
+        else:
+            self.simulation_publisher.notify(
+                SimulationNotification(
+                    category="SUPPORT_BLOCKED",
+                    player_id=unit1.owner,
+                    target_id=unit2.unit_id
+                )
+            )
 
     # OTHERS
-    def get_players_scores(self):
+    def get_players_scores(self) -> dict[str, int]:
+        """
+        Low-level method calculating the player's scores based on their control over the game board.
+        Total score is calculated by adding total number of controlled tiles to the sum of controlled unit's upkeep costs.
+
+        Args: None
+
+        Returns: 
+        - player scores: dict[str, int] - dictionary containig pairs player_id:score for each player in the simulation.
+        """
         players_scores = {}
         for player in self.players:
             players_scores[player] = 0
@@ -610,10 +984,28 @@ class Simulation:
                 players_scores[player] += self.units[unit_id].upkeep
 
         return players_scores
-    def is_upkeep_round(self):
+    def is_upkeep_round(self) -> bool:
+        """
+        Low-level method calculating if the current round should be an upkeep one or not.
+
+        Args: None
+
+        Returns:
+        - is_upkeep_round: bool - True if current round is an upkeep one, False otherwise.
+        """
         return self.round % self.upkeep_round == 0
-    
-    def get_round_data(self):
+    def reset_player_events(self) -> None:
+        self.players_events = {player: [] for player in self.players}
+    def get_round_data(self) -> dict:
+        """
+        Low-level method preparing a detailed data about the current round, tailored for each player participating in the simulation. 
+        Used to provide information to each player at the beginning of each round.
+
+        Args: None
+
+        Returns:
+        - players round data: dict - dictionary containing data about current round.
+        """
         leader_board_dict = self.get_players_scores()
 
         all_controlled_units = {}
@@ -642,9 +1034,15 @@ class Simulation:
             "current_round": self.round,
             "final_round": self.max_round,
             "players": [player for player in self.players if self.players_status[player] == PlayerStatus.ACTIVE],
-            "leaderboard_dict": leader_board_dict,
-            "controlled_units": all_controlled_units,
-            "controlled_regions": all_controlled_regions,
-            "enemy_units_per_region": all_enemy_units_per_region,
-            "event_dict": self.players_events
+            "leaderboard": leader_board_dict,
+            "units": all_controlled_units,
+            "regions": all_controlled_regions,
+            "tresspasers": all_enemy_units_per_region,
+            "events": self.players_events
+        }
+    def get_players_surplus(self):
+        return {
+            player: self.calculate_supplies(player) for player in self.players
+            if self.players_status[player] != PlayerStatus.LOST and 
+            self.calculate_supplies(player) > 0
         }

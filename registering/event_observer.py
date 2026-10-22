@@ -7,7 +7,7 @@ class EventObserver(Observer):
 
     def update(self, notification: SimulationNotification) -> None:
         if notification['category'] == "PLAYER_STATUS_CHANGE":
-            for player in self.players:
+            for player in self.game_controller.players:
                 self.game_controller.simulation.players_events[player].append(f"The status of player {notification['player_id']} changed from {notification['old_player_status']} to {notification['new_player_status']}.")
         elif notification['category'] == "UNIT_RECRUITED":
             self.game_controller.simulation.players_events[notification['player_id']].append(f"New unit {notification['unit_id']} was recruited and awaits orders.")
@@ -34,3 +34,20 @@ class EventObserver(Observer):
         elif notification['category'] == "ROUND_START":
             for player in self.game_controller.simulation.players_events.keys():
                 self.game_controller.simulation.players_events[player] = []
+        elif notification['category'] == "MOVE_BLOCKED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your movement order for unit: {notification['unit_id']} from tile ({notification['new_q']}, {notification['new_r']}, {notification['new_s']}) to tile: ({notification['old_q']}, {notification['old_r']}, {notification['old_s']}) was blocked.")
+        elif notification['category'] == "ATTACK_BLOCKED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your attack order for unit: {notification['unit_id']} at unit: {notification['target_id']} was blocked.")
+        elif notification['category'] == "SUPPORT_BLOCKED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your support order for unit: {notification['unit_id']} at unit: {notification['target_id']} was blocked.")
+        elif notification['category'] == "DEFEND_BLOCKED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your defend order for unit: {notification['unit_id']} at unit: {notification['target_id']} was blocked.")
+        elif notification['category'] == "UNIT_DISBANDED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your unit: {notification['unit_id']} was disbanded as result of low supplies.")
+        elif notification['category'] == "RECRUITMENT_BLOCKED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your recruitment order at tile: ({notification['new_q']}, {notification['new_r']}, {notification['new_s']}) was blocked.")
+        elif notification['category'] == "UNIT_MOVED":
+            self.game_controller.simulation.players_events[notification['player_id']].append(f"Your unit: {notification['unit_id']} moved from tile: {notification['unit_id']} from tile ({notification['old_q']}, {notification['old_r']}, {notification['old_s']}) to tile: ({notification['new_q']}, {notification['new_r']}, {notification['new_s']}).")
+
+
+

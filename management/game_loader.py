@@ -10,12 +10,6 @@ class GameLoader:
     def __init__(self, dir_name="scenarios"):
         self.path = f"{os.path.abspath(os.getcwd())}//{dir_name}"
 
-    def list_games(self):
-        dir_list = os.listdir(self.path)
-
-        # We return only files with .json extension
-        return [file for file in dir_list if file.endswith(".json")]
-
     def get_players(self, file_name):
         with open(f"{self.path}//{file_name}.json") as file:
             data = json.load(file)

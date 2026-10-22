@@ -12,8 +12,6 @@ class SaverObserver(Observer):
         self.game_loader = GameLoader(dir_name)
         self.game_controller = game_controller
 
-        print(self.game_controller.session_id)
-
         self.session_dir = os.path.join(os.getcwd(), dir_name, str(self.game_controller.session_id))
         os.makedirs(self.session_dir, exist_ok=True)
 

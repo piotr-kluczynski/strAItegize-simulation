@@ -1,6 +1,6 @@
 {
     "metadata": {
-        "current_round": 0,
+        "current_round": 1,
         "max_round": 10,
         "upkeep_round": 2
     },
@@ -63,8 +63,8 @@
         },
         {
             "q": 2,
-            "r": 1,
-            "s": 1,
+            "r": 0,
+            "s": -2,
             "unit": "",
             "region": "Shire",
             "is_command_centre": false

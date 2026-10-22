@@ -18,6 +18,19 @@ class LogObserver(Observer):
         json_data = {"log": []}
         json.dump(json_data, self.file, indent=4)
 
+    def read_log(self) -> dict:
+        self.file.seek(0)
+        return json.load(self.file)
+
+    def overwrite_log(self) -> None:
+        json_data = self.read_log()
+
+        json_data["log"].extend(self.logs)
+
+        self.file.seek(0)
+        json.dump(json_data, self.file, indent=4)
+        self.file.truncate()
+
     def update(self, notification: SimulationNotification) -> None:
         log_id = f"{self.round_count}_{self.log_count}.json" # [round]_[log_num]
         json_dict = None
@@ -41,9 +54,10 @@ class LogObserver(Observer):
             }
             self.logs.append(json_dict)
 
-            json_data = json.load(self.file)
-            json_data["log"].append(self.logs)
-            json.dump(json_data, self.file, indent=4)
+            #print(f"Json data: {json_dict}")
+            #print(f"File: {self.file}")
+
+            self.overwrite_log()
 
             self.logs = []
         elif notification["category"] == "PLAYER_STATUS_CHANGE":

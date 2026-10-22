@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from registering.notification import Notification
 
 class SimulationNotification(Notification):
-    category: Literal["PLAYER_STATUS_CHANGE", "UNIT_RECRUITED", "UNIT_DESTROYED", "ATTACK_OUTCOME", "DEFEND_OUTCOME", "REGION_GAINED", "REGION_LOST", "ROUND_START", "ROUND_END", "UNIT_MOVED"]
+    category: Literal["PLAYER_STATUS_CHANGE", "UNIT_RECRUITED", "UNIT_DESTROYED", "ATTACK_OUTCOME", "DEFEND_OUTCOME", "REGION_GAINED", "REGION_LOST", "ROUND_START", "ROUND_END", "UNIT_MOVED", "RECRUITMENT_BLOCKED", "MOVE_BLOCKED", "ATTACK_BLOCKED", "SUPPORT_BLOCKED", "DEFEND_BLOCKED", "UNIT_DISBANDED"]
 
     player_id: Optional[str]
     old_player_status: Optional[Literal["Active", "Exiled", "Lost"]]

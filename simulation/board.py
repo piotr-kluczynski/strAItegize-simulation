@@ -29,6 +29,7 @@ class Board:
 
     def get_region_by_coord(self, q, r, s):
         if q + r + s != 0:
+            print(f"{q}, {r}, {s}")
             return None
 
         tile = self.get_tile_by_coord(q, r, s)
@@ -53,11 +54,14 @@ class Board:
                     results.append(tile)
         return results
 
-    def get_neighbouring_tiles(self, tile):
+    def get_neighbouring_tiles(self, tile, tiles=None):
         results = []
 
+        if tiles is None:
+            tiles = self.tiles
+
         for dq, dr, ds in HEX_DIRECTIONS:
-            neighbour = self.tiles.get((
+            neighbour = tiles.get((
                 tile.q + dq,
                 tile.r + dr,
                 tile.s + ds
@@ -77,7 +81,7 @@ class Board:
         }
 
         for tile in region.tiles:
-            for neighbour in self.get_neighbouring_tiles(tile):
+            for neighbour in self.get_neighbouring_tiles(self.get_tile_by_coord(tile[0], tile[1], tile[2])):
 
                 neighbour_region = tile_to_region.get(neighbour)
 
@@ -86,7 +90,7 @@ class Board:
 
         return list(neighbouring_regions)      
 
-    def find_shortest_path(self, start_tile, end_tile, max_distance, occupancy):
+    def find_shortest_path(self, start_tile, end_tile, max_distance, occupancy=None):
         if calc_distance(start_tile.q, start_tile.r, start_tile.s, end_tile.q, end_tile.r, end_tile.s) > max_distance:
             return None
 
@@ -97,14 +101,17 @@ class Board:
             start_tile: 0,
         }
 
+        if occupancy is None:
+            occupancy = self.tiles
+
         while queue:
             current = queue.popleft()
 
             if current == end_tile:
                 break
 
-            for neighbour in self.get_neighbouring_tiles(current):
-                if occupancy.get((neighbour.q, neighbour.r, neighbour.s)) is not None:
+            for neighbour in self.get_neighbouring_tiles(current, tiles=occupancy):
+                if occupancy.get((neighbour.q, neighbour.r, neighbour.s)).unit is not None:
                     continue
 
                 if neighbour in visited:
