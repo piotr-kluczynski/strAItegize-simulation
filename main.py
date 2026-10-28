@@ -16,7 +16,7 @@ file_list = [entry for entry in dir_list if os.path.isfile(path+'/'+entry)]
 
 for file in file_list:
     if file.endswith(".json"):
-        available_scenarios.append(file)
+        available_scenarios.append(file[:-5])
 
 # Setting up app console line parameters
 parser = argparse.ArgumentParser(prog="StrAItegize - Simulation")
@@ -32,7 +32,7 @@ if __name__ == '__main__':
     print("Welcome to the \"StrAItegize\" - Your own, local simulation for experimenting on Mulit-Agent Systems!")
 
     # Choosing simulation scenario
-    game_controller = GameController(args['scenario'])
+    game_controller = GameController(args.scenario)
 
     game_controller.create_lobby()
 
@@ -41,11 +41,11 @@ if __name__ == '__main__':
         EventObserver(game_controller)
     ]
 
-    if args['log_session']:
+    if args.log_session:
         observers.append(
             LogObserver(session_id=game_controller.session_id)
         )
-    if args['register_session']:
+    if args.register_session:
         observers.append(
             SaverObserver(game_controller)
         )

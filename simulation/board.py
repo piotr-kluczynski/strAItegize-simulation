@@ -37,7 +37,7 @@ class Board:
 
         for region in self.regions.values():
 
-            if tile in region.tiles.values():
+            if tile in region.tiles:
                 corresponding_region = region
 
         return corresponding_region
@@ -81,7 +81,7 @@ class Board:
         }
 
         for tile in region.tiles:
-            for neighbour in self.get_neighbouring_tiles(self.get_tile_by_coord(tile[0], tile[1], tile[2])):
+            for neighbour in self.get_neighbouring_tiles(self.get_tile_by_coord(tile.q, tile.r, tile.s)):
 
                 neighbour_region = tile_to_region.get(neighbour)
 

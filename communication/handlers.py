@@ -2,6 +2,7 @@ from communication.dispatcher import CommandDispatcher
 
 from strAItegize_common.communication.models import ObserveUnitRequest, ObserveUnitResponse
 from strAItegize_common.communication.models import ObserveRegionRequest, ObserveRegionResponse
+from strAItegize_common.communication.models import GetTilesRequest, GetTilesResponse
 from strAItegize_common.communication.models import GetUnitsRequest, GetUnitsResponse
 from strAItegize_common.communication.models import GetRegionsRequest, GetRegionsResponse
 from strAItegize_common.communication.models import GetUnitDetailsRequest, GetUnitDetailsResponse
@@ -15,6 +16,35 @@ from simulation.simulation import PlayerStatus
 from simulation.utils import calc_distance
 
 dispatcher = CommandDispatcher()
+
+@dispatcher.register("GET_TILES")
+def handle_get_tiles(payload: dict, simulation, player: str) -> dict:
+    req = GetTilesRequest.model_validate(payload)
+
+    observed_tiles = simulation.board.tiles.values()
+
+    observations = {}
+
+    for tile in observed_tiles:
+        tile_region = simulation.board.get_region_by_coord(tile.q, tile.r, tile.s)
+        unit_id = tile.unit.unit_id if tile.unit is not None else "Empty"
+        owner = tile_region.owner
+        region = tile_region.region_id
+        is_command_center = True if tile_region.command_centre == (tile.q, tile.r, tile.s) else False
+        
+        coord_key = f"{tile.q},{tile.r},{tile.s}"
+        
+        observations[coord_key] = {
+            "rel_coord": "",
+            "distance": 0,
+            "unit": str(unit_id),
+            "owner": str(owner),
+            "region": str(region),
+            "is_command_center": str(is_command_center)
+        }
+
+    response = GetTilesResponse(tiles_list=observations)
+    return response.model_dump()
 
 @dispatcher.register("OBSERVE_UNIT")
 def handle_observe_unit(payload: dict, simulation, player: str) -> dict:
@@ -108,7 +138,7 @@ def handle_observe_region(payload: dict, simulation, player: str) -> dict:
     command_centre_q, command_centre_r, command_centre_s = region.command_centre
 
     observations = {}
-    for tile in observed_tiles.values():
+    for tile in observed_tiles:
         rel_q = command_centre_q - tile.q
         rel_r = command_centre_r - tile.r
         rel_s =  command_centre_s - tile.s

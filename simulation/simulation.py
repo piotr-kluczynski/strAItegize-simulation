@@ -735,6 +735,7 @@ class Simulation:
                 self.simulation_publisher.notify(
                     SimulationNotification(
                         category="UNIT_MOVED",
+                        player_id=unit.owner,
                         unit_id=unit.unit_id,
                         old_q=unit.tile.q,
                         old_r=unit.tile.r,
