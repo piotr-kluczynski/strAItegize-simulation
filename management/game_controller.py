@@ -31,7 +31,7 @@ class GameController:
         # Waiting for players to connect via socket
         while len(self.communication.get_connected_players()) < len(self.players):
             connected = self.communication.get_connected_players()
-        
+
             os.system('cls')
         
             print("===== STRAITEGIZE LOBBY =====\n")
